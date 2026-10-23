@@ -1,7 +1,5 @@
 import pytest
-from dirty_equals import HasRepr
 from fastapi import Depends, FastAPI
-from fastapi.exceptions import ResponseValidationError
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
 
@@ -58,17 +56,15 @@ def test_filter_sub_model(client: TestClient):
 
 
 def test_validator_is_cloned(client: TestClient):
-    with pytest.raises(ResponseValidationError) as err:
-        client.get("/model/modelX")
-    assert err.value.errors() == [
-        {
-            "type": "value_error",
-            "loc": ("response", "name"),
-            "msg": "Value error, name must end in A",
-            "input": "modelX",
-            "ctx": {"error": HasRepr("ValueError('name must end in A')")},
-        }
-    ]
+    # ResponseValidationError is rendered by the default handler as 500 JSON;
+    # the cloned validator still runs during response serialization.
+    response = client.get("/model/modelX")
+    assert response.status_code == 500
+    error = response.json()["detail"][0]
+    assert error["type"] == "value_error"
+    assert error["loc"] == ["response", "name"]
+    assert error["msg"] == "Value error, name must end in A"
+    assert error["input"] == "modelX"
 
 
 def test_openapi_schema(client: TestClient):

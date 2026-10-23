@@ -1,6 +1,4 @@
-import pytest
 from fastapi import FastAPI
-from fastapi.exceptions import ResponseValidationError
 from fastapi.testclient import TestClient
 from pydantic.dataclasses import dataclass
 
@@ -37,15 +35,22 @@ client = TestClient(app)
 
 
 def test_invalid():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/invalid")
+    response = client.get("/items/invalid")
+    assert response.status_code == 500
+    assert response.json()["detail"][0]["loc"] == ["response", "price"]
 
 
 def test_double_invalid():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/innerinvalid")
+    response = client.get("/items/innerinvalid")
+    assert response.status_code == 500
+    locs = [error["loc"] for error in response.json()["detail"]]
+    assert ["response", "price"] in locs
+    assert ["response", "owner_ids", 0] in locs
 
 
 def test_invalid_list():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/invalidlist")
+    response = client.get("/items/invalidlist")
+    assert response.status_code == 500
+    locs = [error["loc"] for error in response.json()["detail"]]
+    assert ["response", 1, "price"] in locs
+    assert ["response", 2, "price"] in locs

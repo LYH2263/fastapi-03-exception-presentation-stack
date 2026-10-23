@@ -68,6 +68,10 @@ from fastapi.dependencies.utils import (
     solve_dependencies,
 )
 from fastapi.encoders import jsonable_encoder
+from fastapi.error_presentation import (
+    background_with_empty_error_presentation,
+)
+from fastapi.exception_handlers import response_validation_exception_handler
 from fastapi.exceptions import (
     EndpointContext,
     FastAPIError,
@@ -126,6 +130,35 @@ from typing_extensions import deprecated
 
 # Copy of starlette.routing.request_response modified to include the
 # dependencies' AsyncExitStack
+async def _response_validation_error_response(
+    scope: Scope, request: Request, exc: ResponseValidationError
+) -> Response:
+    """Render a pre-send ResponseValidationError.
+
+    Eager response serialization happens before the response head is sent, so
+    the failure can be rendered through the error presentation stack.  The
+    effective exception handler registry (put in scope by Starlette's
+    exception middleware) is consulted so a user-registered
+    ``ResponseValidationError`` handler still wins; without one the stack-aware
+    default presentation is used.
+    """
+    registered: Any = None
+    handlers_state = scope.get("starlette.exception_handlers")
+    if handlers_state is not None:
+        exception_handlers = handlers_state[0]
+        for cls in type(exc).__mro__:
+            if cls in exception_handlers:
+                registered = exception_handlers[cls]
+                break
+    if registered is None or registered is response_validation_exception_handler:
+        return await response_validation_exception_handler(request, exc)
+    if is_async_callable(registered):
+        handler_response = await registered(request, exc)
+    else:
+        handler_response = await run_in_threadpool(registered, request, exc)
+    return cast(Response, handler_response)
+
+
 def request_response(
     func: Callable[[Request], Awaitable[Response] | Response],
 ) -> ASGIApp:
@@ -149,7 +182,23 @@ def request_response(
                 scope["fastapi_inner_astack"] = request_stack
                 async with AsyncExitStack() as function_stack:
                     scope["fastapi_function_astack"] = function_stack
-                    response = await f(request)
+                    try:
+                        response = await f(request)
+                    except ResponseValidationError as exc:
+                        # Pre-send response validation failure: render it
+                        # through the stack-aware default (or a user handler).
+                        # Stream-time failures surface later, while the
+                        # response is being sent, and keep propagating.
+                        response = await _response_validation_error_response(
+                            scope, request, exc
+                        )
+                # Background tasks run after the response is handed to the
+                # client; they must observe an empty error presentation stack
+                # even if the request left frames pushed.
+                if response.background is not None:
+                    response.background = background_with_empty_error_presentation(
+                        response.background
+                    )
                 await response(scope, receive, send)
                 # Continues customization
                 response_awaited = True

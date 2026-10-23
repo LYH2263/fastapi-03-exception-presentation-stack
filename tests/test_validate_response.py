@@ -1,6 +1,4 @@
-import pytest
 from fastapi import FastAPI
-from fastapi.exceptions import ResponseValidationError
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -49,13 +47,18 @@ client = TestClient(app)
 
 
 def test_invalid():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/invalid")
+    # ResponseValidationError now has a stack-aware default presentation:
+    # a 500 JSON response with the error list instead of an uncaught error.
+    response = client.get("/items/invalid")
+    assert response.status_code == 500
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["detail"][0]["loc"] == ["response", "price"]
 
 
 def test_invalid_none():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/invalidnone")
+    response = client.get("/items/invalidnone")
+    assert response.status_code == 500
+    assert response.json()["detail"][0]["loc"] == ["response"]
 
 
 def test_valid_none_data():
@@ -73,10 +76,16 @@ def test_valid_none_none():
 
 
 def test_double_invalid():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/innerinvalid")
+    response = client.get("/items/innerinvalid")
+    assert response.status_code == 500
+    locs = [error["loc"] for error in response.json()["detail"]]
+    assert ["response", "price"] in locs
+    assert ["response", "owner_ids", 0] in locs
 
 
 def test_invalid_list():
-    with pytest.raises(ResponseValidationError):
-        client.get("/items/invalidlist")
+    response = client.get("/items/invalidlist")
+    assert response.status_code == 500
+    locs = [error["loc"] for error in response.json()["detail"]]
+    assert ["response", 1, "price"] in locs
+    assert ["response", 2, "price"] in locs

@@ -1001,6 +1001,12 @@ class FastAPI(Starlette):
         self.exception_handlers.setdefault(
             RequestValidationError, request_validation_exception_handler
         )
+        # ResponseValidationError intentionally has no app-wide default
+        # registration: its stack-aware default presentation is dispatched in
+        # routing before the response starts.  Stream-time failures happen
+        # after the response head is sent and must keep propagating, so a
+        # class-level handler (which Starlette refuses to run once the
+        # response started) cannot cover both cases.
 
         # Starlette still has incorrect type specification for the handlers
         self.exception_handlers.setdefault(
